@@ -1,6 +1,6 @@
 /* Cube Coach offline worker: the app opens from this phone's copy, even with no signal, and quietly fetches a newer version for next time. */
 const CACHE = 'cube-coach';
-const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable.png'];
+const FILES = ['./', './index.html', './algs.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(self.clients.claim()); });
 async function refresh(c, req, key, oldCopy, page) { // oldCopy: a clone taken before the cached page was handed to the browser
@@ -14,7 +14,7 @@ async function refresh(c, req, key, oldCopy, page) { // oldCopy: a clone taken b
 }
 self.addEventListener('fetch', e => {
   const req = e.request; if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
-  const page = req.mode === 'navigate', key = page ? './index.html' : req;
+  const page = req.mode === 'navigate', path = new URL(req.url).pathname, key = page ? (path.endsWith('/') || path.endsWith('/index.html') ? './index.html' : './' + path.split('/').pop()) : req;
   e.respondWith((async () => {
     const c = await caches.open(CACHE), hit = await c.match(key, { ignoreSearch: true }), net = refresh(c, req, key, hit ? hit.clone() : null, page);
     e.waitUntil(net);

@@ -2159,7 +2159,7 @@ const Learn = (() => {
   ];
   function progress(set) { const l = SETS[set].list; return l.filter(c => status(c.id) === 2).length + ' of ' + l.length + ' learned'; }
   const PROG = { f2l: 'F2L', oll: 'OLL', pll: 'PLL' };
-  function renderHome() { $('#learnHome').innerHTML = `<h2 style="margin-bottom:12px">Learn</h2><div class="lessons">${LESSONS.map(l => `<button class="lcard" data-lesson="${l.id}" style="--lc:${l.lc}">${l.icon()}<span><b>${l.title}</b><span>${PROG[l.id] ? progress(PROG[l.id]) : l.sub}</span></span></button>`).join('')}</div>`; }
+  function renderHome() { $('#learnHome').innerHTML = `<h2 style="margin-bottom:12px">Learn</h2>${/^https?:$/.test(location.protocol) ? '<a class="btn primary" href="algs.html" style="margin-bottom:14px">Open the Alg Book: every algorithm, with a learning drill</a>' : ''}<div class="lessons">${LESSONS.map(l => `<button class="lcard" data-lesson="${l.id}" style="--lc:${l.lc}">${l.icon()}<span><b>${l.title}</b><span>${PROG[l.id] ? progress(PROG[l.id]) : l.sub}</span></span></button>`).join('')}</div>`; }
   function openLesson(id) {
     const l = LESSONS.find(x => x.id === id); if (!l) return; filter = 'all';
     $('#learnHome').hidden = true; const el = $('#lesson'); el.hidden = false;
