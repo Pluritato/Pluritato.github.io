@@ -466,7 +466,7 @@ table.t th{font-size:.82rem;color:var(--muted);font-weight:600}
     </section>
     <section class="view" id="v-learn"><div id="learnHome"></div><div id="lesson" class="lesson" hidden></div></section>
     <section class="view" id="v-train">
-      <div class="row" style="margin-bottom:12px"><h2 style="margin-right:8px">Train</h2><div class="seg" id="trainSeg"><button data-m="drill">Algorithm drill</button><button data-m="cross">Cross and colour neutrality</button><button data-m="pll">PLL recognition</button></div></div>
+      <div class="row" style="margin-bottom:12px"><h2 style="margin-right:8px">Train</h2><div class="seg" id="trainSeg"><button data-m="drill">Algorithm drill</button><button data-m="cross">Cross and colour neutrality</button><button data-m="f2l">F2L only</button><button data-m="pll">PLL recognition</button></div></div>
       <div class="tmode" data-m="drill">
         <div class="row" style="margin-bottom:8px"><div class="seg" id="drillSets"></div><span id="drillFil" class="row"></span></div>
         <div class="train-grid">
@@ -478,6 +478,12 @@ table.t th{font-size:.82rem;color:var(--muted);font-weight:600}
         <div class="train-grid">
           <div class="panel"><h3>Scramble, white on top, green in front</h3><div id="crossScr" class="alg" style="margin:6px 0"></div><canvas id="crossCanvas" class="cv"></canvas><p class="small muted" style="text-align:center;margin:4px 0 0">Drag the cube to look at every side.</p></div>
           <div class="panel"><h3 id="crossQ">Which colour has the shortest cross?</h3><div class="colorbtns" id="crossBtns"></div><div id="crossFb" class="fb"></div><div id="crossSol"></div><div class="row" style="margin-top:8px"><button class="btn primary" id="crossNext">Next scramble</button><button class="btn" id="crossTry" hidden>Try it on my cube</button></div></div>
+        </div>
+      </div>
+      <div class="tmode" data-m="f2l" hidden>
+        <div class="train-grid">
+          <div class="panel"><h3 id="fpTitle">Scramble: the cross ends up solved</h3><div id="fpFaces" class="row" style="margin:4px 0"></div><div id="fpScr" class="alg" style="margin:6px 0"></div><canvas id="fpCanvas" class="cv"></canvas><div class="row" style="margin-top:6px"><button class="btn small" id="fpNew">New scramble</button><button class="btn small" id="fpPics">Scramble with pictures</button></div></div>
+          <div class="panel"><div id="fpPad" class="pad minipad" role="button" aria-label="F2L timer"><div id="fpPic" class="padpic"></div><div id="fpClock" class="time">0.00</div><div class="hint" id="fpHint"></div></div><div id="fpAfter" style="margin-top:10px"></div></div>
         </div>
       </div>
       <div class="tmode" data-m="pll" hidden>
@@ -2225,6 +2231,7 @@ const Train = (() => {
   }
   function smartMove(m, now) {
     if (mode === 'cross') return crossMove(m, now);
+    if (mode === 'f2l') return fpMove(m, now);
     if (mode !== 'drill' || !smartOn()) return;
     if (sm.phase === 'need' || sm.phase === 'off' || sm.phase === 'done') { if (sm.phase === 'need') smartPrep(); return; }
     if (sm.phase === 'setup') { sm.done.push(m); if (Smart.state().join('') === sm.target) { sm.phase = 'ready'; sm.start = Smart.state(); } drawSmart(); return; }
@@ -2297,6 +2304,81 @@ const Train = (() => {
     const fb = $('#crossFb'); fb.textContent = ok ? `Yes. ${CROSS_INFO[face][0]} needs only ${min} moves.` : `${CROSS_INFO[face][0]} needs ${pick.len}. The shortest is ${min}.`; fb.className = 'fb ' + (ok ? 'ok' : 'no');
     $('#crossSol').innerHTML = `<p class="muted small">Score ${Store.data.cn.ok} of ${Store.data.cn.n}. Tap a colour to watch its cross on the cube.</p>` + cuse().slice().sort((a, b) => a.len - b.len).map(o => `<div class="step"><div class="lab"><span class="sw" style="background:${CROSS_INFO[o.face][1]}"></span><span>${CROSS_INFO[o.face][0]}<br><small>${o.len} moves</small></span></div><div class="alg sm">${tilesFrom(C.parse(o.rot).concat(o.alg))}</div></div>`).join('');
   }
+  // ---- F2L only: the cross is already solved, you do just the four pairs ----
+  const fplayer = new Player(); let fp = { phase: 'off' }, fpRaf = 0, fhold = null, fview, fcube;
+  const rotOf = f => C.CROSS_ROT.find(r => r[1] === f)[0], inFrame = (st, rot) => rot ? C.apply(st, rot) : st;
+  const pairsIn = rs => Object.values(C.SLOTS).filter(S => C.slotSolved(rs, S)).length;
+  const fpFace = () => { const f = Store.data.settings.f2lFace, act = Neutral.active(); return f && act.includes(f) ? f : Neutral.home(); };
+  const holdOf = rot => { const f = C.apply(C.solved(), rot ? C.parse(rot) : []); return `${Analysis.CN[f[C.C.D]]} on the bottom, ${Analysis.CN[f[C.C.F]]} in front`; };
+  function fpScramble(from, face) { // random turns, then the cross put back, so whatever the start, the cross ends up solved
+    const rot = rotOf(face);
+    for (let k = 0; k < 5; k++) {
+      const base = C.parse(Scr.s333()), s = C.apply(from, base), cr = C.solveCross(inFrame(s, rot), false);
+      const seq = C.simplify(Analysis.toPhysical(base.concat(rot ? C.parse(rot) : [], cr)));
+      const end = C.apply(from, seq); if (C.crossSolved(inFrame(end, rot)) && !C.f2lSolved(inFrame(end, rot))) return seq;
+    }
+    return C.parse(Scr.s333());
+  }
+  function reach(state) { // some way to get from a solved cube to this exact cube, for the 3D picture
+    if (C.isSolved(state)) return [];
+    try { const inv = C.invert(C.solveState(state, { rot: 'best' }).steps.flatMap(x => x.alg)), want = state.join(''); for (const a of ['', 'x', 'x2', "x'", 'z', "z'"]) for (const b of ['', 'y', 'y2', "y'"]) { const pre = C.parse((a + ' ' + b).trim()); if (C.apply(C.apply(C.solved(), pre), inv).join('') === want) return pre.concat(inv); } } catch (e) { }
+    return [];
+  }
+  function fpNext() {
+    cancelAnimationFrame(fpRaf); if (fhold) fhold.cancel(); const face = fpFace(), smart = Smart.connected(), from = smart ? Smart.state() : C.solved();
+    const seq = fpScramble(from, face), start = C.apply(from, seq);
+    fp = { phase: smart ? 'scramble' : 'manual', face, rot: rotOf(face), seq, start, target: start.join(''), done: [] };
+    fplayer.dur = 150; fplayer.load(new Ad3D(fview, fcube), reach(from), seq, seq.length);
+    $('#fpClock').textContent = '0.00'; $('#fpAfter').innerHTML = fpStats(); drawFp();
+  }
+  function drawFp() {
+    const nm = Neutral.name(fp.face), act = Neutral.active();
+    $('#fpFaces').innerHTML = act.length > 1 ? act.map(f => `<button class="chip${f === fp.face ? ' on' : ''}" data-fpf="${f}">${Neutral.sw(f)}${Neutral.name(f)}</button>`).join('') : '';
+    $('#fpTitle').textContent = `Scramble: the ${nm} cross ends up solved`;
+    const pad = $('#fpPad'); pad.classList.toggle('ready', fp.phase === 'ready'); pad.classList.toggle('scr', fp.phase === 'scramble'); $('#fpPic').innerHTML = '';
+    if (fp.phase === 'scramble') {
+      const todo = C.simplify(C.invert(fp.done).concat(fp.seq));
+      $('#fpScr').innerHTML = todo.map((t, i) => `<span class="mv ${mvClass(t)}${i ? '' : ' cur'}">${esc(t)}</span>`).join('');
+      if (todo.length) $('#fpPic').innerHTML = `<div class="gsm">${FT.pic(todo[0])}</div><div><span class="alg">${tilesFrom([todo[0]])}</span><br><b>${FT.words(todo[0])}</b></div>`;
+      $('#fpHint').textContent = fp.done.length ? 'Keep going. A wrong turn shows up as the next move to undo.' : 'Do this on your cube with white on top and green in front. It starts from wherever your cube is now.';
+    } else if (fp.phase === 'manual') {
+      $('#fpScr').innerHTML = tilesFrom(fp.seq);
+      $('#fpHint').innerHTML = `Start from a solved cube. Do the scramble with white on top and green in front: the ${nm} cross ends up solved. Then hold it with ${holdOf(fp.rot)}, press and hold here, release, and solve the four pairs. Tap when they are all in.`;
+    } else if (fp.phase === 'ready') {
+      $('#fpScr').innerHTML = `<span class="chip" style="background:var(--good);color:#04200f;border-color:transparent">Scrambled: the ${nm} cross is solved</span>`;
+      $('#fpHint').textContent = `Hold it with ${holdOf(fp.rot)}. Look as long as you like. The clock starts on your first turn and stops by itself when all four pairs are in.`; $('#fpClock').textContent = '0.00';
+    } else if (fp.phase === 'run') $('#fpHint').textContent = `Pairs in: ${fp.k || 0} of 4. Keep turning.`;
+    else if (fp.phase === 'done') $('#fpHint').textContent = 'All four pairs are in. The next scramble starts from where your cube is now.';
+  }
+  function fpMove(m, now) {
+    if (fp.phase === 'scramble') { fp.done.push(m); if (Smart.state().join('') === fp.target) fp.phase = 'ready'; return drawFp(); }
+    if (fp.phase === 'ready') { fp.phase = 'run'; fp.t0 = now; fp.mv = []; fp.ts = []; fp.pairT = []; fp.k = 0; const tick = () => { if (fp.phase !== 'run') return; $('#fpClock').textContent = fmt(performance.now() - fp.t0).slice(0, -1); fpRaf = requestAnimationFrame(tick); }; tick(); }
+    if (fp.phase !== 'run') return;
+    fp.mv.push(m); fp.ts.push(Math.round(now - fp.t0)); const rs = inFrame(Smart.state(), fp.rot), k = C.crossSolved(rs) ? pairsIn(rs) : 0;
+    while (fp.pairT.length < k) fp.pairT.push(fp.ts.length - 1);
+    if (k !== fp.k) { fp.k = k; drawFp(); }
+    if (C.f2lSolved(rs)) fpDone(Math.max(1, Math.round(now - fp.t0)));
+  }
+  function fpDone(t) {
+    cancelAnimationFrame(fpRaf); const smart = fp.phase === 'run'; fp.phase = 'done'; $('#fpPad').classList.remove('ready', 'scr'); $('#fpClock').textContent = fmt(t);
+    let th = null, worst = 0, wAt = -1, n = null;
+    if (smart) { th = 0; for (let k = 1; k < fp.ts.length; k++) { const g = fp.ts[k] - fp.ts[k - 1]; if (g > 550) th += g - 300; if (g > worst) { worst = g; wAt = k; } } n = Analysis.grpCount(fp.mv); }
+    let bot = null; try { const r = C.solveState(fp.start, { rot: fp.rot }); bot = r.steps.filter(x => x.type === 'f2l'); } catch (e) { }
+    const botN = bot ? bot.reduce((a, x) => a + C.countMoves(x.alg), 0) : null;
+    const L = (Store.data.f2lp = Store.data.f2lp || []); L.push({ d: Date.now(), t, n, th: th === null ? null : Math.round(th), bot: botN, f: fp.face }); if (L.length > 100) L.shift(); Store.save();
+    const pairAt = i => fp.pairT.filter(p => p < i).length + 1, sec = v => (v / 1000).toFixed(1);
+    let h = `<h3>F2L in ${fmt(t)}</h3>`;
+    if (smart) h += `<p style="margin:4px 0">${n} moves${botN ? ` (the Bot needs ${botN})` : ''}. ${th < 300 ? ' <b>No stops at all.</b>' : ` Stopped for <b>${sec(th)} s</b> in total.`}${worst > 900 ? ` The longest stop was ${sec(worst - 300)} s, before pair ${Math.min(4, pairAt(wAt))}.` : th >= 300 ? ' No long stops: good.' : ''}</p>`;
+    if (bot && bot.length) h += `<details class="mine"><summary>How the Bot solves these four pairs (${botN} moves)</summary><p class="small muted" style="margin:6px 0">Hold it with ${holdOf(fp.rot)}.</p>${bot.map((x, i) => `<div class="step"><div class="lab"><span>Pair ${i + 1}<br><small>${SLOT_NAME[x.slot] || ''}</small></span></div><div class="alg sm">${tilesFrom(x.alg)}</div></div>`).join('')}</details>`;
+    h += `<div class="row" style="margin-top:8px"><button class="btn primary" id="fpNext">Next scramble</button></div>` + fpStats();
+    $('#fpAfter').innerHTML = h; drawFp();
+    Session.on('f2lp', { t, th, n, bot: botN });
+  }
+  function fpStats() {
+    const l = (Store.data.f2lp || []).slice(-5); if (l.length < 2) return '';
+    const m = v => v.reduce((a, b) => a + b, 0) / v.length, ths = l.filter(x => x.th !== null).map(x => x.th);
+    return `<p class="small muted" style="margin:10px 0 0">Your last ${l.length}: ${fmt(m(l.map(x => x.t)))} on average${ths.length ? `, ${(m(ths) / 1000).toFixed(1)} s of stops` : ''}.</p>`;
+  }
   // ---- PLL recognition ----
   let qcase = null, qt0 = 0, qdone = false;
   function nextQuiz() {
@@ -2314,11 +2396,14 @@ const Train = (() => {
   function setMode(m) {
     mode = m; $$('#trainSeg button').forEach(b => b.classList.toggle('on', b.dataset.m === m)); $$('.tmode').forEach(p => p.hidden = p.dataset.m !== m);
     activeHold = m === 'drill' ? dhold : null; cplayer.pause(); Smart.setListener(smartMove); $('#crossTry').hidden = !Smart.connected(); cx = null;
+    if (m === 'f2l') { activeHold = Smart.connected() ? null : fhold; if (fp.phase === 'off' || (Smart.connected() !== (fp.phase !== 'manual') && fp.phase !== 'done')) fpNext(); else fplayer.redraw(); }
     if (m === 'drill') { if (!dcase) nextDrill(); else if (smartOn() && sm.phase !== 'run') smartPrep(); } if (m === 'cross') { if (!copts) nextCross(); else cplayer.redraw(); } if (m === 'pll' && !qcase) nextQuiz();
   }
   function init() {
     dhold = new HoldTimer($('#drillPad'), $('#drillClock'), { onStop: drillStop, disabled: () => smartOn() });
-    document.addEventListener('cubechange', () => { $('#crossTry').hidden = !Smart.connected(); if (App.tab() === 'train' && mode === 'drill') { if (Smart.connected()) smartPrep(); else nextDrill(); } });
+    fhold = new HoldTimer($('#fpPad'), $('#fpClock'), { disabled: () => Smart.connected() || fp.phase !== 'manual', onStop: t => fpDone(t) });
+    fcube = P3.cube(3); fview = new P3.View($('#fpCanvas'), fcube); fview.ondrag = () => fplayer.redraw();
+    document.addEventListener('cubechange', () => { $('#crossTry').hidden = !Smart.connected(); if (App.tab() === 'train' && mode === 'f2l' && fp.phase !== 'run') { activeHold = Smart.connected() ? null : fhold; fpNext(); } if (App.tab() === 'train' && mode === 'drill') { if (Smart.connected()) smartPrep(); else nextDrill(); } });
     ccube = P3.cube(3); cview = new P3.View($('#crossCanvas'), ccube); cview.ondrag = () => cplayer.redraw();
     drawDrillBar();
     $('#v-train').addEventListener('click', e => {
@@ -2338,13 +2423,16 @@ const Train = (() => {
       if ((b = e.target.closest('[data-case]'))) { const [s, id] = b.dataset.case.split('|'); return Learn.openCase(s, id); }
       if ((b = e.target.closest('#crossBtns button'))) return answerCross(b.dataset.f);
       if (e.target.closest('#crossNext')) return nextCross();
+      if (e.target.closest('#fpNew') || e.target.closest('#fpNext')) return fpNext();
+      if ((b = e.target.closest('[data-fpf]'))) { Store.data.settings.f2lFace = b.dataset.fpf; Store.save(); return fpNext(); }
+      if (e.target.closest('#fpPics') && fp.seq) { const smart = Smart.connected(); return Guide.open({ title: 'Scramble', parts: [{ kind: 'scramble', name: 'Scramble', tokens: fp.phase === 'scramble' ? C.simplify(C.invert(fp.done).concat(fp.seq)) : fp.seq }], setup3d: reach(smart ? Smart.state() : C.solved()), intros: false, autoClose: smart, doneText: 'Scrambled. The cross is solved. Close this, turn the cross to the bottom and solve the four pairs.' }); }
       if ((b = e.target.closest('#quizBtns button'))) return answerQuiz(b.dataset.p);
       if (e.target.closest('#quizNext')) return nextQuiz();
     });
   }
-  return { init, setMode, show: () => setMode(mode), hide: () => { cplayer.pause(); Smart.setListener(null); cancelAnimationFrame(sraf); }, redraw: () => cplayer.redraw(), setDrill: (set, fil) => { dq = null; if (SETS[set]) dset = set; dfil = fil || 'all'; drawDrillBar(); dcase = null; setMode('drill'); },
+  return { init, setMode, show: () => setMode(mode), hide: () => { cplayer.pause(); Smart.setListener(null); cancelAnimationFrame(sraf); if (fp.phase === 'run') { cancelAnimationFrame(fpRaf); fp.phase = 'off'; } }, redraw: () => { cplayer.redraw(); fplayer.redraw(); }, setDrill: (set, fil) => { dq = null; if (SETS[set]) dset = set; dfil = fil || 'all'; drawDrillBar(); dcase = null; setMode('drill'); },
     setQueue: items => { dq = items && items.length ? { items, i: 0 } : null; dcase = null; }, setCrossFaces: f => { cfaces = f && f.length > 1 ? f : null; copts = null; },
-    nextCross, nextQuiz, seq: () => dseq, _t: () => ({ phase: sm.phase, setup: sm.setup || [], id: dcase && dcase.id, set: dset }), auto: (k, ms) => setTimeout(() => { if (k === dseq && dq && mode === 'drill' && App.tab() === 'train' && $('#modal').hidden && !(dhold && dhold.state !== 'idle') && sm.phase !== 'run') nextDrill(); }, ms) };
+    nextCross, nextQuiz, fpNext, fpPhase: () => fp.phase, seq: () => dseq, _fp: () => ({ phase: fp.phase, seq: fp.seq, target: fp.target, rot: fp.rot, start: fp.start, face: fp.face }), _t: () => ({ phase: sm.phase, setup: sm.setup || [], id: dcase && dcase.id, set: dset }), auto: (k, ms) => setTimeout(() => { if (k === dseq && dq && mode === 'drill' && App.tab() === 'train' && $('#modal').hidden && !(dhold && dhold.state !== 'idle') && sm.phase !== 'run') nextDrill(); }, ms) };
 })();
 
 /* ===== Coach: level, split check, diagnosis, daily plan ===== */
@@ -2430,7 +2518,7 @@ const Coach = (() => {
     const why = d.measured ? `${NAME[k]} takes you about ${y} s. A sub-${d.next} solve spends about ${t} s there. That is ${g} s to win, more than any other step.` : `This is a first guess from your answers. Do the split check and I will measure it instead.`;
     const a = {
       cross: { title: 'Plan the whole cross before you start', task: 'Cross trainer: 10 scrambles. Then 10 solves with inspection on, eyes closed for the cross.', btn: [['Open the cross trainer', 'train:cross'], ['Read the cross lesson', 'learn:cross']], act: [['Turn on inspection', 'insp']] },
-      f2l: { title: 'F2L without stopping', task: '10 slow solves: turn at half speed and never pause. Then 10 F2L cases in the drill.', btn: [['Drill F2L cases', 'train:drill:F2L:all'], ['Read the F2L lesson', 'learn:f2l'], ['Read: lookahead', 'learn:look']], act: [['See how the Bot solves my slowest scramble', 'worst']] },
+      f2l: { title: 'F2L without stopping', task: '10 rounds of F2L only (the cross is already solved for you): turn at half speed and never pause. Then 10 F2L cases in the drill.', btn: [['F2L only practice', 'train:f2l'], ['Drill F2L cases', 'train:drill:F2L:all'], ['Read the F2L lesson', 'learn:f2l'], ['Read: lookahead', 'learn:look']], act: [['See how the Bot solves my slowest scramble', 'worst']] },
       oll: full('OLL') ? { title: 'Faster OLL', task: 'Drill 20 OLL cases. Aim to recognise each one before you finish the last pair.', btn: [['Drill OLL', 'train:drill:OLL:all']] } : { title: 'Learn more OLL', task: `You know ${count('OLL', 2)} of 57. Every case you still solve in two steps costs you about a second.`, btn: [['Open OLL', 'learn:oll'], ['Drill the ones I am learning', 'train:drill:OLL:s1']] },
       pll: full('PLL') ? { title: 'Faster PLL', task: '20 rounds of the recognition quiz, then drill your slowest PLLs.', btn: [['PLL recognition quiz', 'train:pll'], ['Drill PLL', 'train:drill:PLL:all']] } : { title: 'Finish full PLL', task: `You know ${count('PLL', 2)} of 21. Two-step PLL costs over a second every solve.`, btn: [['Open PLL', 'learn:pll'], ['Drill the ones I am learning', 'train:drill:PLL:s1']] }
     }[k];
@@ -2438,8 +2526,8 @@ const Coach = (() => {
     if (d.cat) {
       const x = (d.cat.ms / 1000).toFixed(1), sm = d.sm, c = d.cat.k;
       const T = {
-        f2lPause: ['Stop pausing during F2L', `Your cube shows about ${x} s of standing still during F2L in every solve. That is your biggest loss. Turn slower and keep your eyes on the next pair.`, [['How to stop pausing', 'learn:look'], ['Drill F2L cases', 'train:drill:F2L:all']]],
-        f2lMoves: ['Shorter F2L', `Your F2L takes about ${Math.round(sm.f2lm)} moves. The Bot needs about ${Math.round(sm.bf)} on the same scrambles. That costs you about ${x} s per solve.`, [['Drill F2L cases', 'train:drill:F2L:all'], ['Read the F2L lesson', 'learn:f2l']]],
+        f2lPause: ['Stop pausing during F2L', `Your cube shows about ${x} s of standing still during F2L in every solve. That is your biggest loss. Turn slower and keep your eyes on the next pair.`, [['F2L only practice', 'train:f2l'], ['How to stop pausing', 'learn:look']]],
+        f2lMoves: ['Shorter F2L', `Your F2L takes about ${Math.round(sm.f2lm)} moves. The Bot needs about ${Math.round(sm.bf)} on the same scrambles. That costs you about ${x} s per solve.`, [['F2L only practice', 'train:f2l'], ['Drill F2L cases', 'train:drill:F2L:all']]],
         crossMoves: ['A shorter cross', `Your cross takes about ${sm.cm.toFixed(1)} moves. The shortest is about ${sm.co.toFixed(1)}. That costs you about ${x} s per solve.`, [['Open the cross trainer', 'train:cross'], ['Read the cross lesson', 'learn:cross']]],
         crossPause: ['Plan the whole cross before you start', `You stand still for about ${x} s during the cross in every solve. Plan all four edges before the first turn.`, [['Open the cross trainer', 'train:cross'], ['Read the cross lesson', 'learn:cross']]],
         ollTwo: ['Learn the OLLs you solve in two steps', `Two-step OLL costs you about ${x} s per solve. The ones your cube caught are first in your list below.`, [['Open OLL', 'learn:oll']]],
@@ -2987,7 +3075,7 @@ const Smart = (() => {
   }
   // ---- report ----
   const SC = { cross: '#f4f4f0', p1: '#10b455', p2: '#3ccf7c', p3: '#10b455', p4: '#3ccf7c', oll: '#ffd500', pll: '#ff8a1c' };
-  const GO = { f2lPause: ['How to stop pausing', 'learn:look'], f2lMoves: ['Drill F2L cases', 'train:drill:F2L:all'], crossMoves: ['Cross trainer', 'train:cross'], crossPause: ['Cross trainer', 'train:cross'], ollRecog: ['Drill OLL', 'train:drill:OLL:all'], pllRecog: ['PLL recognition quiz', 'train:pll'] };
+  const GO = { f2lPause: ['F2L only practice', 'train:f2l'], f2lMoves: ['F2L only practice', 'train:f2l'], crossMoves: ['Cross trainer', 'train:cross'], crossPause: ['Cross trainer', 'train:cross'], ollRecog: ['Drill OLL', 'train:drill:OLL:all'], pllRecog: ['PLL recognition quiz', 'train:pll'] };
   function report(solve) {
     const el = $('#smartPanel'); lastSolve = solve; el.hidden = false;
     const an = Analysis.analyze(solve.s, solve.mv.split(' '), solve.ts);
@@ -3210,7 +3298,7 @@ const Teach = (() => {
 /* ===== Session: one button. Builds today's training from your data, starts every exercise, counts for you and moves on. ===== */
 const Session = (() => {
   let S = null, tm = 0;
-  const TAB = { solves: 'timer', drill: 'train', cross: 'train', quiz: 'train', split: 'coach', check: 'coach' };
+  const TAB = { solves: 'timer', drill: 'train', cross: 'train', quiz: 'train', f2lp: 'train', split: 'coach', check: 'coach' };
   const sd = () => (Store.data.sess = Store.data.sess || { len: 1, hist: [], cur: null });
   const find = (set, id) => SETS[set].list.find(c => c.id === id);
   const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0;[a[i], a[j]] = [a[j], a[i]]; } return a; };
@@ -3238,10 +3326,11 @@ const Session = (() => {
     if (!rest && needSplit) add({ kind: 'split', replan: true, title: 'Split check', why: 'Solve as usual, but tap once after the cross, once after F2L, once when the top is all yellow and once when solved. That shows me where your time goes.', n: 3 });
     if (d) {
       const c = d.cat ? d.cat.k : d.focus;
-      if (c === 'f2lPause') add({ kind: 'solves', fb: 'f2l', title: 'Slow solves: never stop in F2L', why: 'Turn at half speed and keep turning. A bad time is fine. The goal is zero stops between pairs.', n: n(4, 3) });
+      if (c === 'f2lPause') add({ kind: 'f2lp', title: 'F2L only: never stop', why: 'The cross is already solved for you, so this is only the four pairs. Turn at half speed and keep turning. A slow, steady F2L beats a fast one with stops.', n: n(5, 3) });
       else if (c === 'f2lMoves' || c === 'f2l') {
         const w = d.sm ? d.sm.worstF2L.map(e => e.id) : [], lr = ALGS.F2L.filter(x => Learn.status(x.id) === 1).map(x => x.id), rest = shuffle(ALGS.F2L.map(x => x.id));
         add({ kind: 'drill', title: 'F2L pairs, the short way', why: 'Set each pair up and solve it. The short solution is shown after every try, so you can compare.', items: [...new Set(w.concat(lr, rest))].slice(0, n(6, 4)).map(id => ({ set: 'F2L', id })) });
+        add({ kind: 'f2lp', title: 'F2L only', why: 'The cross is already solved for you, so this is only the four pairs. Afterwards you can see how the Bot would solve the same pairs.', n: n(4, 3) });
       } else if (c === 'crossMoves' || c === 'crossPause' || c === 'cross') {
         if (Neutral.active().length > 1) add({ kind: 'cross', faces: Neutral.active(), title: 'Find the shortest cross', why: 'Look at the scramble and tap the colour with the easiest cross.', n: n(5, 3) });
         add({ kind: 'solves', fb: 'cross', title: 'Solves with a planned cross', why: 'Before the first turn, know where all four edges go. Look for as long as you need.', n: n(4, 3) });
@@ -3266,12 +3355,12 @@ const Session = (() => {
     return B;
   }
   const pl = (n, w, ws) => n + ' ' + (n === 1 ? w : ws || w + 's');
-  const label = b => b.kind === 'solves' || b.kind === 'split' ? pl(b.n, 'solve') : b.kind === 'drill' ? (new Set(b.items.map(i => i.id)).size === 1 && b.n > 1 ? pl(b.n, 'try', 'tries') : pl(b.n, 'case')) : b.kind === 'guide' ? pl(b.n, 'time') : b.kind === 'teach' ? 'until it sticks' : b.kind === 'check' ? '3 min' : pl(b.n, 'round');
-  function mins(B) { const a = Coach.average(), s = a ? a.ms / 1000 : 30; return Math.max(1, Math.round(B.reduce((t, b) => t + (b.kind === 'solves' || b.kind === 'split' ? b.n * (s + 50) / 60 : b.kind === 'drill' ? b.n * 0.45 : b.kind === 'guide' ? b.n * 1.3 : b.kind === 'teach' ? 6 : b.kind === 'cross' ? b.n * 0.5 : b.kind === 'quiz' ? b.n * 0.15 : 3), 0))); }
-  const DOT = { solves: 'var(--cR)', split: 'var(--cR)', drill: 'var(--cL)', guide: 'var(--cF)', teach: 'var(--cF)', cross: 'var(--cB)', quiz: 'var(--cB)', check: 'var(--cD)' };
+  const label = b => b.kind === 'solves' || b.kind === 'split' ? pl(b.n, 'solve') : b.kind === 'drill' ? (new Set(b.items.map(i => i.id)).size === 1 && b.n > 1 ? pl(b.n, 'try', 'tries') : pl(b.n, 'case')) : b.kind === 'guide' ? pl(b.n, 'time') : b.kind === 'teach' ? 'until it sticks' : b.kind === 'f2lp' ? pl(b.n, 'round') : b.kind === 'check' ? '3 min' : pl(b.n, 'round');
+  function mins(B) { const a = Coach.average(), s = a ? a.ms / 1000 : 30; return Math.max(1, Math.round(B.reduce((t, b) => t + (b.kind === 'solves' || b.kind === 'split' ? b.n * (s + 50) / 60 : b.kind === 'drill' ? b.n * 0.45 : b.kind === 'guide' ? b.n * 1.3 : b.kind === 'teach' ? 6 : b.kind === 'f2lp' ? b.n * 1.2 : b.kind === 'cross' ? b.n * 0.5 : b.kind === 'quiz' ? b.n * 0.15 : 3), 0))); }
+  const DOT = { solves: 'var(--cR)', split: 'var(--cR)', drill: 'var(--cL)', guide: 'var(--cF)', teach: 'var(--cF)', f2lp: 'var(--cF)', cross: 'var(--cB)', quiz: 'var(--cB)', check: 'var(--cD)' };
   function result(b) {
     if (b.done < 1) return 'skipped';
-    if (b.kind === 'solves') return b.res.length ? 'mean ' + fmt(mean(b.res)) : b.done + ' done';
+    if (b.kind === 'solves' || b.kind === 'f2lp') return b.res.length ? 'mean ' + fmt(mean(b.res)) : b.done + ' done';
     if (b.kind === 'cross' || b.kind === 'quiz') return (b.ok || 0) + ' of ' + b.done + ' right';
     if (b.kind === 'teach') return b.ok ? 'done from memory' : 'practised';
     if (b.kind === 'drill') return b.done + ' done' + (b.prom && b.prom.length ? ', ' + b.prom.length + ' now automatic' : '');
@@ -3327,6 +3416,7 @@ const Session = (() => {
     else if (b.kind === 'teach') return Teach.open(b.set, b.id, { onDone: r => { if (!S || cur() !== b) return; b.done = 1; b.ok = r.ok; save(); advance(); }, onClose: () => pause() });
     else if (b.kind === 'cross') { Train.setCrossFaces(b.faces); App.go('train:cross'); }
     else if (b.kind === 'quiz') { App.go('train:pll'); Train.nextQuiz(); }
+    else if (b.kind === 'f2lp') { App.go('train:f2l'); if (Train.fpPhase() === 'done') Train.fpNext(); }
     else if (b.kind === 'split') { App.go('coach'); setTimeout(() => { const p = $('#splitPanel'); if (p) p.scrollIntoView({ block: 'center' }); }, 60); }
     else if (b.kind === 'check') { App.go('coach'); Coach.check(ok => { if (!S || cur() !== b) return; if (!ok) return pause(); b.done = 1; S.blocks = S.blocks.slice(0, S.i + 1).concat(build()); advance(); }); }
     bar();
@@ -3340,7 +3430,7 @@ const Session = (() => {
       next: { label: lastOne ? 'Next step' : 'Again', fn: () => (b.done >= b.n ? advance() : guide(b)) }, autoNext: Smart.connected() ? 1800 : 0, onClose: () => pause() });
   }
   function on(type, p) { // the timer, the drill and the trainers report here
-    if (!S || S.paused || S.wait) return; const b = cur(); if (!b || b.kind !== { solve: 'solves', drill: 'drill', cross: 'cross', quiz: 'quiz', split: 'split' }[type]) return;
+    if (!S || S.paused || S.wait) return; const b = cur(); if (!b || b.kind !== { solve: 'solves', drill: 'drill', cross: 'cross', quiz: 'quiz', split: 'split', f2lp: 'f2lp' }[type]) return;
     let note = '', delay = 1500;
     if (type === 'solve') {
       if (p.p === -1) return; const an = p.an, nm = Neutral.name;
@@ -3353,12 +3443,14 @@ const Session = (() => {
     } else if (type === 'drill') { b.res.push(p.t); if (p.promoted) (b.prom = b.prom || []).push(p.id); note = `${p.id}: ${fmt(p.t)}.${p.promoted ? ' Now automatic.' : ''}`; }
     else if (type === 'cross' || type === 'quiz') { b.ok = (b.ok || 0) + (p.ok ? 1 : 0); note = p.ok ? 'Right.' : 'Not that one. The answer is marked.'; delay = type === 'cross' ? 2800 : 1500; }
     else if (type === 'split') note = 'Saved.';
+    else if (type === 'f2lp') { b.res.push(p.t); note = `F2L in ${fmt(p.t)}.${p.th != null ? (p.th < 300 ? ' No stops.' : ` Stopped ${sec(p.th)} s.`) : ''}${p.n && p.bot ? ` ${p.n} moves, the Bot needs ${p.bot}.` : ''}`; delay = 2600; }
     b.done++; const fin = b.done >= b.n; if (fin) S.wait = true; save(); bar(note);
     if (fin) { tm = setTimeout(advance, delay); return; }
     const here = () => S && !S.paused && cur() === b && App.tab() === 'train' && $('#modal').hidden;
     if (type === 'drill') Train.auto(Train.seq(), Smart.connected() ? 1700 : 2800);
     if (type === 'cross') tm = setTimeout(() => { if (here()) Train.nextCross(); }, 3200);
     if (type === 'quiz') tm = setTimeout(() => { if (here()) Train.nextQuiz(); }, 1500);
+    if (type === 'f2lp') tm = setTimeout(() => { if (here() && Train.fpPhase() === 'done') Train.fpNext(); }, 3200);
   }
   function advance() {
     if (!S) return; if (activeHold && activeHold.state !== 'idle') { tm = setTimeout(advance, 600); return; } // never cover a running timer
